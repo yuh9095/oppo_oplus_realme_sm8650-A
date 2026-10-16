@@ -88,8 +88,8 @@ on:
 
 jobs:
   build:
-    runs‑on: ubuntu‑latest
-    permissions:
+       runs‑on: ubuntu‑latest
+     permissions:
       actions: write
       contents: read
     steps:
