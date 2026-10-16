@@ -1,0 +1,334 @@
+name: Pineapple‑SM8650 官方Manifest纯内核构建
+on:
+  workflow_dispatch:
+    inputs:
+      CPU:
+        description: "kernel_manifest分支"
+        required: true
+        default: 'sm8650'
+      FEIL:
+        description: "配置xml文件"
+        required: true
+        default: 'pineapple'
+      CPUD:
+        description: "处理器代号"
+        required: true
+        default: 'pineapple'
+      ANDROID_VERSION:
+        description: "内核安卓版本"
+        required: true
+        default: 'android14'
+      KERNEL_VERSION:
+        description: "内核版本"
+        required: true
+        default: '6.1'
+      lz4_enable:
+        description: '是否安装 lz4 1.10.0+zstd 1.5.7 补丁'
+        required: true
+        type: boolean
+        default: 'true'
+      lz4kd_enable:
+        description: '是否安装 LZ4KD 补丁'
+        required: true
+        type: boolean
+        default: 'false'
+      bbr_enable:
+        description: 'BBR拥塞控制(false关闭,true启用,default设为默认)'
+        required: true
+        type: choice
+        default: 'false'
+        options:
+          - 'false'
+          - 'true'
+          - 'default'
+      droidspaces_enable:
+        description: 'Droidspaces容器支持(false关闭,standard基础,extend扩展)'
+        required: true
+        type: choice
+        default: 'false'
+        options:
+          - 'false'
+          - 'standard'
+          - 'extend'
+      droidspaces_break_kmi:
+        description: '【高危】开启CONFIG_CFS_BANDWIDTH / CONFIG_CGROUP_PIDS，破坏GKI‑KMI，必须全套刷boot+vendor_boot+vendor_dlkm，禁止OTA'
+        required: true
+        type: boolean
+        default: 'false'
+      better_net:
+        description: '开启网络功能拓展(ipset/iptables高级)'
+        required: true
+        type: boolean
+        default: 'false'
+      ssg_enable:
+        description: '三星SSG IO调度器(一加12可能bug)'
+        required: true
+        type: boolean
+        default: 'true'
+      rekernel_enable:
+        description: 'Re‑Kernel应用冻结支持'
+        required: true
+        type: boolean
+        default: 'false'
+      baseband_guard:
+        description: '内核级基带保护'
+        required: true
+        type: boolean
+        default: 'true'
+      ccache_update:
+        description: '更新ccache缓存(改源码/配置打开)'
+        required: true
+        type: boolean
+        default: 'false'
+      ccache_debug:
+        description: '上传ccache调试日志'
+        required: true
+        type: boolean
+        default: 'false'
+
+jobs:
+  build:
+    runs‑on: ubuntu‑latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize‑build‑space@master
+        with:
+          root‑reserve‑mb: 8192
+          temp‑reserve‑mb: 2048
+          remove‑dotnet: 'true'
+          remove‑android: 'true'
+          remove‑haskell: 'true'
+          remove‑codeql: 'true'
+
+      - name: Configure Git
+        run: |
+         git config --global user.name "build"
+         git config --global user.email "ci@build.local"
+
+      - name: Install dependencies
+        run: |
+         sudo apt update && sudo apt upgrade -y
+         sudo apt install -y python3 git curl bison flex make bc zip unzip ccache aria2
+
+      - name: Install repo tool
+        run: |
+         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
+         chmod a+x ~/repo
+         sudo mv ~/repo /usr/local/bin/repo
+
+      - name: Initialize repo and sync
+        run: |
+         mkdir kernel_workspace && cd kernel_workspace
+         repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
+         repo sync
+         rm -f kernel_platform/common/android/abi_gki_protected_exports_* || true
+         rm -f kernel_platform/msm‑kernel/android/abi_gki_protected_exports_* || true
+         sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
+         sed -i 's/ -dirty//g' kernel_platform/msm‑kernel/scripts/setlocalversion
+
+      - name: Configure ccache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache_sm8650" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=3G" >> $GITHUB_ENV
+          mkdir -p ${{ env.CCACHE_DIR }}
+          ccache -M 3G
+          ccache -o compression=true
+
+      - name: Restore ccache cache
+        uses: actions/cache@v5
+        id: ccache‑restore
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache‑sm8650‑${{ github.event.inputs.droidspaces_enable }}_${{ github.event.inputs.droidspaces_break_kmi }}‑${{ runner.os }}‑${{ github.ref_name }}
+
+      - name: Apply lz4 & zstd patch
+        if: inputs.lz4_enable
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          git clone --depth=1 https://github.com/cctv18/oneplus_sm8650_toolchain temp_zram
+          cp temp_zram/zram_patch/001‑lz4.patch ./
+          cp temp_zram/zram_patch/lz4armv8.S ./lib/
+          cp temp_zram/zram_patch/002‑zstd.patch ./
+          git apply -p1 < 001‑lz4.patch || true
+          patch -p1 -F3 < 002‑zstd.patch || true
+          rm -rf temp_zram
+
+      - name: Apply lz4kd patch
+        if: inputs.lz4kd_enable
+        run: |
+          cd kernel_workspace/kernel_platform
+          git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
+          cd common
+          cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
+          cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./lib/
+          cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto/
+          cp ../SukiSU_patch/other/zram/zram_patch/${{ github.event.inputs.KERNEL_VERSION }}/lz4kd.patch ./
+          patch -p1 -F3 < lz4kd.patch || true
+
+      - name: Apply common configs & CVE patch
+        run: |
+          cd kernel_workspace/kernel_platform/msm‑kernel
+          echo "CONFIG_TMPFS_XATTR=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_HEADERS_INSTALL=n" >> ./arch/arm64/configs/gki_defconfig
+
+          wget https://github.com/cctv18/oneplus_sm8650_toolchain/raw/main/other_patch/cve‑2026‑43499‑rtmutex‑6.1.patch
+          patch -p1 -F3 < cve‑2026‑43499‑rtmutex‑6.1.patch || true
+
+      - name: Enable better‑net network config
+        if: inputs.better_net
+        run: |
+          cd kernel_workspace/kernel_platform/msm‑kernel
+          echo "CONFIG_BPF_STREAM_PARSER=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_SET=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_MAX=65534" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_BITMAP_IP=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_BITMAP_IPMAC=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_BITMAP_PORT=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_IP=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_IPMARK=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_IPPORT=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_IPPORTIP=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_IPPORTNET=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_IPMAC=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_MAC=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_NETPORTNET=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_NET=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_NETNET=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_NETPORT=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_SET_LIST_SET=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP6_NF_NAT=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./arch/arm64/configs/gki_defconfig
+
+      - name: Enable BBR congestion control
+        run: |
+          if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
+            cd kernel_workspace/kernel_platform/msm‑kernel
+            echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_BBR=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_CUBIC=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_VEGAS=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_NV=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_WESTWOOD=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_HTCP=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_BRUTAL=y" >> ./arch/arm64/configs/gki_defconfig
+            if [[ "${{ github.event.inputs.bbr_enable }}" == "default" ]]; then
+              echo "CONFIG_DEFAULT_TCP_CONG=bbr" >> ./arch/arm64/configs/gki_defconfig
+            else
+              echo "CONFIG_DEFAULT_TCP_CONG=cubic" >> ./arch/arm64/configs/gki_defconfig
+            fi
+          fi
+
+      - name: DroidSpaces patches & config
+        run: |
+          if [[ "${{ github.event.inputs.droidspaces_enable }}" != "false" ]]; then
+            cd kernel_workspace/kernel_platform/common
+            wget https://github.com/cctv18/oneplus_sm8650_toolchain/raw/main/droidspaces_patch/fix_sysvipc_kabi_6_7_8.patch
+            wget https://github.com/cctv18/oneplus_sm8650_toolchain/raw/main/droidspaces_patch/fix_oplus_bsp_midas.patch
+            wget https://github.com/cctv18/oneplus_sm8650_toolchain/raw/main/droidspaces_patch/ntsync_base.patch
+            wget https://github.com/cctv18/oneplus_sm8650_toolchain/raw/main/droidspaces_patch/ntsync_compat_${{ github.event.inputs.ANDROID_VERSION }}‑${{ github.event.inputs.KERNEL_VERSION }}.patch
+            patch -p1 -F3 < fix_sysvipc_kabi_6_7_8.patch || true
+            patch -p1 -F3 < fix_oplus_bsp_midas.patch || true
+            patch -p1 -F3 < ntsync_base.patch || true
+            patch -p1 -F3 < ntsync_compat_${{ github.event.inputs.ANDROID_VERSION }}‑${{ github.event.inputs.KERNEL_VERSION }}.patch || true
+
+            cd ../msm‑kernel
+            echo "CONFIG_PID_NS=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IPC_NS=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_USER_NS=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_SYSVIPC=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_DEVTMPFS=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_NAMESPACES=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_POSIX_MQUEUE=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y" >> ./arch/arm64/configs/gki_defconfig
+            echo "CONFIG_NTSYNC=y" >> ./arch/arm64/configs/gki_defconfig
+
+            if [[ "${{ github.event.inputs.droidspaces_enable }}" == "extend" ]]; then
+              echo "CONFIG_BT_HCIVHCI=y" >> ./arch/arm64/configs/gki_defconfig
+              echo "CONFIG_STATIC_USERMODEHELPER=n" >> ./arch/arm64/configs/gki_defconfig
+              echo "CONFIG_COREDUMP=y" >> ./arch/arm64/configs/gki_defconfig
+              cd ../common
+              wget https://github.com/cctv18/oneplus_sm8650_toolchain/raw/main/droidspaces_patch/evdi_drm.patch
+              patch -p1 -F3 < evdi_drm.patch || true
+              cd ../msm‑kernel
+              echo "CONFIG_DRM_LINDROID_EVDI=y" >> ./arch/arm64/configs/gki_defconfig
+            fi
+
+            # 高危：开启破坏KMI的cgroup选项
+            if [[ "${{ github.event.inputs.droidspaces_break_kmi }}" == "true" ]]; then
+              echo "===== WARNING: Enable CONFIG_CFS_BANDWIDTH & CONFIG_CGROUP_PIDS, break GKI KMI ====="
+              echo "CONFIG_CFS_BANDWIDTH=y" >> ./arch/arm64/configs/gki_defconfig
+              echo "CONFIG_CGROUP_PIDS=y" >> ./arch/arm64/configs/gki_defconfig
+            fi
+          fi
+
+      - name: Enable SSG IO scheduler
+        if: inputs.ssg_enable
+        run: |
+          cd kernel_workspace/kernel_platform/msm‑kernel
+          echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./arch/arm64/configs/gki_defconfig
+
+      - name: Enable Re‑Kernel
+        if: inputs.rekernel_enable
+        run: |
+          cd kernel_workspace/kernel_platform/msm‑kernel
+          echo "CONFIG_REKERNEL=y" >> ./arch/arm64/configs/gki_defconfig
+
+      - name: Enable baseband‑guard
+        if: inputs.baseband_guard
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          curl -sSL https://github.com/cctv18/Baseband‑guard/raw/master/setup.sh | bash
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
+          cd ../msm‑kernel
+          echo "CONFIG_BBG=y" >> ./arch/arm64/configs/gki_defconfig
+
+      - name: Official build oplus_build_kernel.sh
+        run: |
+         cd kernel_workspace
+         export PATH="/usr/lib/ccache:$PATH"
+         ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
+
+      - name: Save ccache cache
+        if: inputs.ccache_update || steps.ccache‑restore.outputs.cache‑hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache‑sm8650‑${{ github.event.inputs.droidspaces_enable }}_${{ github.event.inputs.droidspaces_break_kmi }}‑${{ runner.os }}‑${{ github.ref_name }}
+
+      - name: Make AnyKernel3
+        run: |
+         cd kernel_workspace
+         git clone https://github.com/Kernel‑SU/AnyKernel3 --depth=1
+         rm -rf ./AnyKernel3/.git
+         cp kernel_platform/out/${{ github.event.inputs.CPUD }}‑gki/dist/Image ./AnyKernel3/
+         cd AnyKernel3
+         zip -r ../AnyKernel3_plain.zip ./*
+
+      - name: Upload artifacts
+        uses: actions/upload‑artifact@v4
+        with:
+          name: kernel_output
+          path: |
+            kernel_workspace/kernel_platform/out/${{ github.event.inputs.CPUD }}‑gki/dist/boot.img
+            kernel_workspace/kernel_platform/out/${{ github.event.inputs.CPUD }}‑gki/dist/system_dlkm.img
+            kernel_workspace/kernel_platform/out/${{ github.event.inputs.CPUD }}‑gki/dist/vendor_boot.img
+            kernel_workspace/kernel_platform/out/${{ github.event.inputs.CPUD }}‑gki/dist/vendor_dlkm.img
+            kernel_workspace/AnyKernel3_plain.zip
+
+      - name: Upload ccache‑debug‑log
+        if: always() && inputs.ccache_debug
+        uses: actions/upload‑artifact@v4
+        with:
+          name: ccache‑debug‑log
+          path: ${{ env.CCACHE_DIR }}
