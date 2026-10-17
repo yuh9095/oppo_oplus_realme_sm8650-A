@@ -89,6 +89,11 @@ jobs:
         run: |
          sudo apt update && sudo apt upgrade -y
          sudo apt install -y python3 git curl patch zip unzip
+         rm -rf kernel_workspace
+         mkdir kernel_workspace
+         cd kernel_workspace
+         echo "当前仓库：$GITHUB_REPOSITORY"
+         echo "当前分支：$GITHUB_REF_NAME"
 
       - name: Install repo tool
         run: |
@@ -105,46 +110,6 @@ jobs:
          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
          sed -i 's/ -dirty//g' kernel_platform/common/scripts/setlocalversion
          sed -i 's/ -dirty//g' kernel_platform/msm-kernel/scripts/setlocalversion
-
-      - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
-        if: inputs.lz4_enable
-        run: |
-          cd kernel_workspace
-          git clone --depth=1 https://github.com/cctv18/android_kernel_common_oneplus_sm8650 temp_zram_patch
-          cp ./temp_zram_patch/zram_patch/001-lz4.patch ./kernel_platform/common/
-          cp ./temp_zram_patch/zram_patch/lz4armv8.S ./kernel_platform/common/lib
-          cp ./temp_zram_patch/zram_patch/002-zstd.patch ./kernel_platform/common/
-          cd kernel_platform/common
-          patch -p1 -F3 <001-lz4.patch || true
-          patch -p1 -F3 <002-zstd.patch || true
-
-      - name: 应用 LZ4KD 补丁
-        if: inputs.lz4kd_enable
-        run: |
-          cd kernel_workspace
-          if [ ! -d "SukiSU_patch" ]; then
-            git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
-          fi
-          cd kernel_platform/common
-          cp -r ../../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
-          cp -r ../../SukiSU_patch/other/zram/lz4k/lib/* ./lib
-          cp -r ../../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
-          cp ../../SukiSU_patch/other/zram/zram_patch/${{ github.event.inputs.KERNEL_VERSION }}/lz4kd.patch ./
-          patch -p1 -F3 < lz4kd.patch || true
-
-      - name: 注入内核defconfig基础配置
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          if [[ ${{ github.event.inputs.lz4kd_enable }} == 'true' ]]; then
-            echo "CONFIG_ZSMALLOC=y" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CRYPTO_LZ4HC=y" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CRYPTO_LZ4K=y" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CRYPTO_LZ4KD=y" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CRYPTO_842=y" >> arch/arm64/configs/gki_defconfig
-          fi
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> arch/arm64/configs/gki_defconfig
-          sed -i 's/check_defconfig//' ./build.config.gki
-          echo "CONFIG_HEADERS_INSTALL=n" >> arch/arm64/configs/gki_defconfig
 
       - name: 网络增强 better_net（仅BPF流解析器）
         if: inputs.better_net
