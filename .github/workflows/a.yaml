@@ -110,10 +110,10 @@ jobs:
           cd kernel_workspace
           ls
           git clone --depth=1 https://github.com/cctv18/android_kernel_common_oneplus_sm8650 temp_zram_patch
-          cp ./temp_zram_patch/zram_patch/001-lz4.patch ./kernel_platform/common
-          cp ./temp_zram_patch/zram_patch/lz4armv8.S ./kernel_platform/common/lib
-          cp ./temp_zram_patch/zram_patch/002-zstd.patch ./kernel_platform/common/
-          cd kernel_platform/
+          cp ./temp_zram_patch/zram_patch/001-lz4.patch ./kernel_platform/
+          cp ./temp_zram_patch/zram_patch/lz4armv8.S ./kernel_platform/lib
+          cp ./temp_zram_patch/zram_patch/002-zstd.patch ./kernel_platform/
+          cd kernel_platform
           patch -p1 -F3 <001-lz4.patch || true
           patch -p1 -F3 <002-zstd.patch || true
 
@@ -124,7 +124,7 @@ jobs:
           if [ ! -d "SukiSU_patch" ]; then
             git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
           fi
-          cd kernel_platform/common
+          cd kernel_platform
           cp -r ../../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
           cp -r ../../SukiSU_patch/other/zram/lz4k/lib/* ./lib
           cp -r ../../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
@@ -133,7 +133,7 @@ jobs:
 
       - name: 注入内核defconfig基础配置
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/kernel_platform/
           if [[ ${{ github.event.inputs.lz4kd_enable }} == 'true' ]]; then
             echo "CONFIG_ZSMALLOC=y" >> arch/arm64/configs/gki_defconfig
             echo "CONFIG_CRYPTO_LZ4HC=y" >> arch/arm64/configs/gki_defconfig
@@ -148,13 +148,13 @@ jobs:
       - name: 网络增强 better_net（仅BPF流解析器）
         if: inputs.better_net
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/kernel_platform
           echo "CONFIG_BPF_STREAM_PARSER=y" >> arch/arm64/configs/gki_defconfig
 
       - name: BBR拥塞控制
         run: |
           BBR_MODE=${{ github.event.inputs.bbr_enable }}
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/kernel_platform
           if [[ "$BBR_MODE" != "false" ]]; then
             echo "CONFIG_TCP_CONG_ADVANCED=y" >> arch/arm64/configs/gki_defconfig
             echo "CONFIG_TCP_CONG_BBR=y" >> arch/arm64/configs/gki_defconfig
@@ -175,7 +175,7 @@ jobs:
         run: |
           DROID=${{ github.event.inputs.droidspaces_enable }}
           if [[ "$DROID" == "false" ]];then exit 0;fi
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/kernel_platform
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/droidspaces_patch/fix_sysvipc_kabi_6_7_8.patch
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/droidspaces_patch/fix_oplus_bsp_midas.patch
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/droidspaces_patch/ntsync_base.patch
@@ -240,14 +240,14 @@ jobs:
       - name: SSG IO调度器
         if: inputs.ssg_enable
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/kernel_platform
           echo "CONFIG_MQ_IOSCHED_SSG=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> arch/arm64/configs/gki_defconfig
 
       - name: Baseband‑guard基带保护（完整脚本）
         if: inputs.baseband_guard
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/kernel_platform
           curl -sSL https://github.com/cctv18/Baseband-guard/raw/master/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
           echo "CONFIG_BBG=y" >> arch/arm64/configs/gki_defconfig
