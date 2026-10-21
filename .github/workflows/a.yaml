@@ -100,7 +100,7 @@ jobs:
       - name: 网络增强 better_net（仅BPF流解析器）
         if: inputs.better_net
         run: |
-          cd kernel_workspace/kernel_platform
+          cd kernel_workspace/kernel_platform/common
           echo "CONFIG_BPF_STREAM_PARSER=y" >> arch/arm64/configs/gki_defconfig
 
       - name: BBR拥塞控制
