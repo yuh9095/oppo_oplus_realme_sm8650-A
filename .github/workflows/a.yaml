@@ -177,6 +177,7 @@ jobs:
           # Enable xattr, posix acl support on tmpfs For NixOS support
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_XATTR=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_REKERNEL=y" >> arch/arm64/configs/gki_defconfig
 
           # ⚠️ WARNING: These two break GKI kABI, DO NOT ENABLE
           # echo "CONFIG_CFS_BANDWIDTH=y" >> arch/arm64/configs/gki_defconfig
